@@ -22,8 +22,9 @@ import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 
 const HOST = Bun.env.HOST ?? "0.0.0.0";
 const PORT = Number(Bun.env.PORT ?? 3000);
-const ADMIN_USERNAME = Bun.env.ADMIN_USERNAME ?? "creator";
-const ADMIN_PASSWORD = Bun.env.ADMIN_PASSWORD ?? "changeme";
+const DEFAULT_ADMIN_USERNAME = "creator";
+const DEFAULT_ADMIN_PASSWORD = "changeme";
+const ADMIN_USERNAME = DEFAULT_ADMIN_USERNAME;
 const SESSION_COOKIE = "sid";
 const SESSION_TTL_DAYS = Number(Bun.env.SESSION_TTL_DAYS ?? 7);
 const SESSION_MAX_AGE = SESSION_TTL_DAYS * 24 * 60 * 60; // seconds
@@ -114,7 +115,11 @@ function isProduction() {
 }
 
 function isUsingDefaultCredentials() {
-  return ADMIN_USERNAME === "creator" && ADMIN_PASSWORD === "changeme";
+  const admin = getAdminUser(ADMIN_USERNAME);
+  if (!admin) {
+    return true;
+  }
+  return passwordsMatch(DEFAULT_ADMIN_PASSWORD, admin.password_hash, admin.salt);
 }
 
 function ensureProductionConfig() {
@@ -137,10 +142,6 @@ function ensureProductionConfig() {
     console.warn(
       "⚠️  Using default admin credentials (creator/changeme). You will be required to change your password on first login."
     );
-  } else if (ADMIN_PASSWORD === "changeme") {
-    console.warn(
-      "⚠️  Using the default admin password. Set ADMIN_PASSWORD before deploying to production."
-    );
   }
 }
 
@@ -155,38 +156,30 @@ function clearAuthCookie() {
 }
 
 function initializeAdminUser() {
-  const forcePasswordChange = isUsingDefaultCredentials();
-
-  // Clean up any admin users with different usernames (env username changed)
+  // Clean up any admin users with different usernames (legacy env-based installs)
   const allAdmins = listAdminUsers();
   for (const oldAdmin of allAdmins) {
     if (oldAdmin.username !== ADMIN_USERNAME) {
-      console.log(`Removing stale admin user "${oldAdmin.username}" (env changed to "${ADMIN_USERNAME}")`);
+      console.log(`Removing stale admin user "${oldAdmin.username}" (resetting to default "${ADMIN_USERNAME}")`);
       deleteAdminUser(oldAdmin.username);
     }
   }
 
   const admin = getAdminUser(ADMIN_USERNAME);
-  const { hash, salt } = derivePasswordHash(ADMIN_PASSWORD);
 
-  if (admin) {
-    // Check if we need to update the password (env changed or using defaults)
-    const envPasswordMatches = passwordsMatch(ADMIN_PASSWORD, admin.password_hash, admin.salt);
-
-    if (!envPasswordMatches) {
-      // Env password changed - update DB to match env (and require password change)
-      console.log(`Admin password updated from environment for "${ADMIN_USERNAME}"`);
-      updateAdminPassword(ADMIN_USERNAME, hash, salt, forcePasswordChange);
-    } else if (forcePasswordChange && !admin.must_change_password) {
-      // Using default credentials but must_change_password isn't set
-      updateAdminPassword(ADMIN_USERNAME, hash, salt, true);
-    }
+  if (!admin) {
+    const { hash, salt } = derivePasswordHash(DEFAULT_ADMIN_PASSWORD);
+    console.log(`Creating admin user "${ADMIN_USERNAME}" with default credentials`);
+    ensureAdminUser(ADMIN_USERNAME, hash, salt, true);
     return;
   }
 
-  // Create new admin user
-  console.log(`Creating admin user "${ADMIN_USERNAME}"`);
-  ensureAdminUser(ADMIN_USERNAME, hash, salt, forcePasswordChange);
+  const usingDefaultPassword = passwordsMatch(DEFAULT_ADMIN_PASSWORD, admin.password_hash, admin.salt);
+
+  if (usingDefaultPassword && !admin.must_change_password) {
+    console.log(`Enforcing password rotation for "${ADMIN_USERNAME}"`);
+    updateAdminPassword(ADMIN_USERNAME, admin.password_hash, admin.salt, true);
+  }
 }
 
 function adminMustChangePassword() {
@@ -420,7 +413,11 @@ function renderLogin(message?: string) {
   const defaultCredsHint = isDefaultCreds
     ? `<div class="flash" style="text-align:left;">
         <strong>First time setup:</strong> Use default credentials to log in, then you'll set your own password.<br>
-        <span style="font-size:0.9rem;">Username: <code style="background:rgba(254,253,251,0.08);padding:0.1rem 0.35rem;border-radius:0.25rem;">creator</code> &nbsp; Password: <code style="background:rgba(254,253,251,0.08);padding:0.1rem 0.35rem;border-radius:0.25rem;">changeme</code></span>
+        <span style="font-size:0.9rem;">Username: <code style="background:rgba(254,253,251,0.08);padding:0.1rem 0.35rem;border-radius:0.25rem;">${escapeHtml(
+          DEFAULT_ADMIN_USERNAME
+        )}</code> &nbsp; Password: <code style="background:rgba(254,253,251,0.08);padding:0.1rem 0.35rem;border-radius:0.25rem;">${escapeHtml(
+          DEFAULT_ADMIN_PASSWORD
+        )}</code></span>
       </div>`
     : "";
 
@@ -434,7 +431,7 @@ function renderLogin(message?: string) {
       ${defaultCredsHint}
       <form class="form-card" method="post" action="/admin/login">
         <label for="username">Username</label>
-        <input id="username" name="username" type="text" placeholder="${isDefaultCreds ? "creator" : "username"}" required />
+        <input id="username" name="username" type="text" placeholder="${isDefaultCreds ? DEFAULT_ADMIN_USERNAME : "username"}" required />
         <label for="password">Password</label>
         <input id="password" name="password" type="password" placeholder="••••••••" required />
         <button class="primary" style="width:100%;" type="submit">Sign in</button>
@@ -461,7 +458,9 @@ function renderPasswordChange({
 }) {
   const isDefaultCreds = isUsingDefaultCredentials();
   const currentPasswordHint = requireChange && isDefaultCreds
-    ? `<p style="margin:0 0 0.5rem;color:var(--muted);font-size:0.85rem;">Current password is: <code style="background:rgba(254,253,251,0.08);padding:0.15rem 0.4rem;border-radius:0.25rem;">changeme</code></p>`
+    ? `<p style="margin:0 0 0.5rem;color:var(--muted);font-size:0.85rem;">Current password is: <code style="background:rgba(254,253,251,0.08);padding:0.15rem 0.4rem;border-radius:0.25rem;">${
+        escapeHtml(DEFAULT_ADMIN_PASSWORD)
+      }</code></p>`
     : "";
 
   const body = `

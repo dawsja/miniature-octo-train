@@ -35,25 +35,26 @@ For any environment (including local development) Bun automatically loads variab
 | Name | Default | Description |
 | --- | --- | --- |
 | `PORT` | `3000` | Port for `Bun.serve` |
-| `ADMIN_USERNAME` | `creator` | Admin login username |
-| `ADMIN_PASSWORD` | `changeme` | Admin password (change in production) |
 | `DATA_DIR` | `./data` | Directory for the SQLite file |
 | `DATABASE_FILE` | `downloads.db` | Filename for the SQLite database |
 | `SESSION_TTL_DAYS` | `7` | Session lifetime for admin logins |
 | `MIN_PASSWORD_LENGTH` | `12` | Minimum characters required for admin password changes |
 
+The admin console always boots with the default credentials `creator` / `changeme`. They are stored in SQLite and every first login is forced to rotate the password, so no `.env` changes are required for authentication.
+
 ## Production deployment
 
 1. Install Bun (v1.1+) and PM2 (globally via `npm install -g pm2`) on the target host.
-2. Copy `.env.example` to `.env`, set a unique `ADMIN_USERNAME`, and choose a strong `ADMIN_PASSWORD` that satisfies `MIN_PASSWORD_LENGTH`.
-3. Point `DATA_DIR` to a persistent location (for example `/var/lib/download-hub`) and create the directory with the correct ownership before starting the service.
+2. Copy `.env.example` to `.env` and adjust the networking/storage values (`HOST`, `PORT`, `DATA_DIR`, etc.).
+3. Ensure `DATA_DIR` points to a persistent directory (for example `/var/lib/download-hub`) and create it with the correct ownership before starting the service.
 4. Install dependencies: `bun install --production`.
 5. Start the service under PM2:
    ```bash
    pm2 start ecosystem.config.js --env production
    pm2 save
    ```
-6. (Optional) Configure PM2 to launch on boot: `pm2 startup systemd`.
+6. Log into `/admin` with `creator` / `changeme`, then follow the forced password rotation flow to store a unique password in SQLite.
+7. (Optional) Configure PM2 to launch on boot: `pm2 startup systemd`.
 
 ### Runtime management
 
@@ -75,7 +76,7 @@ For any environment (including local development) Bun automatically loads variab
 ## Admin workflow
 
 1. Visit `http://localhost:3000/admin`
-2. Log in with the configured credentials
+2. Log in with `creator` / `changeme` (you'll be forced to set a new password on first access)
 3. Use **Add new video pack** to create a card (slug optional, auto-built from the title)
 4. Attach any number of download links to each video
 5. Update or delete existing packs inline
