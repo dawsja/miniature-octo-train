@@ -30,6 +30,14 @@ export type SessionRecord = {
   user_agent: string | null;
 };
 
+export type AdminUserRecord = {
+  username: string;
+  password_hash: string;
+  salt: string;
+  must_change_password: number;
+  updated_at: string;
+};
+
 const dataDir = Bun.env.DATA_DIR ?? join(process.cwd(), "data");
 mkdirSync(dataDir, { recursive: true });
 const dbPath = join(dataDir, Bun.env.DATABASE_FILE ?? "downloads.db");
@@ -69,6 +77,16 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TEXT NOT NULL,
   ip_address TEXT,
   user_agent TEXT
+);
+`);
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS admin_users (
+  username TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  salt TEXT NOT NULL,
+  must_change_password INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `);
 
@@ -300,4 +318,37 @@ export function deleteSession(id: string) {
 
 export function pruneSessions() {
   db.exec("DELETE FROM sessions WHERE expires_at < datetime('now')");
+}
+
+export function getAdminUser(username: string): AdminUserRecord | null {
+  const row = db.prepare("SELECT * FROM admin_users WHERE username = ?").get(username) as AdminUserRecord | undefined;
+  return row ?? null;
+}
+
+export function ensureAdminUser(username: string, passwordHash: string, salt: string) {
+  const existing = getAdminUser(username);
+  if (existing) {
+    return;
+  }
+
+  db.prepare(
+    `
+    INSERT INTO admin_users (username, password_hash, salt, must_change_password)
+    VALUES (?, ?, ?, 1)
+  `
+  ).run(username, passwordHash, salt);
+}
+
+export function updateAdminPassword(username: string, passwordHash: string, salt: string, forceRotate = false) {
+  db.prepare(
+    `
+    INSERT INTO admin_users (username, password_hash, salt, must_change_password, updated_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(username) DO UPDATE SET
+      password_hash = excluded.password_hash,
+      salt = excluded.salt,
+      must_change_password = excluded.must_change_password,
+      updated_at = CURRENT_TIMESTAMP
+  `
+  ).run(username, passwordHash, salt, forceRotate ? 1 : 0);
 }

@@ -1,11 +1,12 @@
-# Creator download hub
+# Dawson's Resource Hub
 
-A minimal Bun + SQLite app for sharing download bundles from self-hosting tutorial videos. Viewers get a polished, searchable landing page for Docker Compose files and helper scripts, while the creator can log into `/admin` to curate content.
+A minimal Bun + SQLite app for sharing download bundles from Dawson's tutorial videos. Viewers get a polished, searchable landing page for Docker Compose files and helper scripts, while the creator can log into `/admin` to curate content.
 
 ## Features
 
 - 📦 SQLite-backed storage for videos + unlimited asset links
 - 🧑‍💼 Password-protected admin dashboard with CRUD for videos and assets
+- 🔐 Forced first-login password rotation for the creator account
 - 🧭 Public landing page with search + responsive cards
 - 🪄 Automatic sample data (Vaultwarden, Nginx Proxy Manager, Jellyfin) seeded on first boot
 - 🔌 JSON feed at `/api/videos` for embedding elsewhere
@@ -37,6 +38,7 @@ The server listens on `http://localhost:3000` by default. Change `PORT` to overr
 | `DATA_DIR` | `./data` | Directory for the SQLite file |
 | `DATABASE_FILE` | `downloads.db` | Filename for the SQLite database |
 | `SESSION_TTL_DAYS` | `7` | Session lifetime for admin logins |
+| `MIN_PASSWORD_LENGTH` | `12` | Minimum characters required for admin password changes |
 
 ## Admin workflow
 
