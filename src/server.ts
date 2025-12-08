@@ -114,6 +114,25 @@ function isProduction() {
   return (Bun.env.NODE_ENV ?? "").toLowerCase() === "production";
 }
 
+function isSecureRequest(request: Request) {
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  if (forwardedProto) {
+    const proto = forwardedProto.split(",")[0]?.trim().toLowerCase();
+    if (proto === "https") return true;
+    if (proto === "http") return false;
+  }
+
+  try {
+    const url = new URL(request.url);
+    if (url.protocol === "https:") return true;
+    if (url.protocol === "http:") return false;
+  } catch {
+    // ignore URL parse errors and fall through to env-based fallback
+  }
+
+  return isProduction();
+}
+
 function isUsingDefaultCredentials() {
   const admin = getAdminUser(ADMIN_USERNAME);
   if (!admin) {
@@ -145,13 +164,13 @@ function ensureProductionConfig() {
   }
 }
 
-function authCookie(sessionId: string, maxAgeSeconds: number) {
-  const secure = isProduction() ? "; Secure" : "";
+function authCookie(sessionId: string, maxAgeSeconds: number, request: Request) {
+  const secure = isSecureRequest(request) ? "; Secure" : "";
   return `${SESSION_COOKIE}=${sessionId}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
 }
 
-function clearAuthCookie() {
-  const secure = isProduction() ? "; Secure" : "";
+function clearAuthCookie(request: Request) {
+  const secure = isSecureRequest(request) ? "; Secure" : "";
   return `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`;
 }
 
@@ -234,7 +253,7 @@ async function handleLogin(request: Request) {
   });
 
   const destination = admin.must_change_password ? "/admin/password" : "/admin";
-  return redirect(destination, authCookie(sessionId, SESSION_MAX_AGE));
+  return redirect(destination, authCookie(sessionId, SESSION_MAX_AGE, request));
 }
 
 async function handleLogout(request: Request) {
@@ -243,7 +262,7 @@ async function handleLogout(request: Request) {
   if (sessionId) {
     deleteSession(sessionId);
   }
-  return redirect("/admin", clearAuthCookie());
+  return redirect("/admin", clearAuthCookie(request));
 }
 
 function renderLayout({
