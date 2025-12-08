@@ -28,6 +28,8 @@ bun run --watch src/server.ts
 
 The server listens on `http://localhost:3000` by default. Change `PORT` to override.
 
+For any environment (including local development) Bun automatically loads variables from a `.env` file located in the project root. Copy `.env.example` to `.env` and adjust values before running the server.
+
 ## Environment variables
 
 | Name | Default | Description |
@@ -39,6 +41,36 @@ The server listens on `http://localhost:3000` by default. Change `PORT` to overr
 | `DATABASE_FILE` | `downloads.db` | Filename for the SQLite database |
 | `SESSION_TTL_DAYS` | `7` | Session lifetime for admin logins |
 | `MIN_PASSWORD_LENGTH` | `12` | Minimum characters required for admin password changes |
+
+## Production deployment
+
+1. Install Bun (v1.1+) and PM2 (globally via `npm install -g pm2`) on the target host.
+2. Copy `.env.example` to `.env`, set a unique `ADMIN_USERNAME`, and choose a strong `ADMIN_PASSWORD` that satisfies `MIN_PASSWORD_LENGTH`.
+3. Point `DATA_DIR` to a persistent location (for example `/var/lib/download-hub`) and create the directory with the correct ownership before starting the service.
+4. Install dependencies: `bun install --production`.
+5. Start the service under PM2:
+   ```bash
+   pm2 start ecosystem.config.js --env production
+   pm2 save
+   ```
+6. (Optional) Configure PM2 to launch on boot: `pm2 startup systemd`.
+
+### Runtime management
+
+- Check process health: `pm2 status download-hub`
+- Tail application logs: `pm2 logs download-hub`
+- Reload without downtime after deploying changes: `pm2 reload download-hub`
+
+### Reverse proxy notes
+
+- Bind the app to localhost when sitting behind Nginx/Traefik/Caddy by setting `HOST=127.0.0.1`.
+- TLS termination happens at the proxy; the app automatically sets the `Secure` cookie attribute whenever `NODE_ENV=production`, so keep the proxy-to-client hop on HTTPS.
+- Use the `/healthz` endpoint for load balancer checks (returns `200 ok`).
+
+### Backups
+
+- The SQLite database lives at `${DATA_DIR}/${DATABASE_FILE}`. Back up this file regularly.
+- Sessions and admin password rotation data are also stored in SQLite, so include them in your backup strategy.
 
 ## Admin workflow
 

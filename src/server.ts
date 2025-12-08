@@ -2,6 +2,7 @@ import {
   createAsset,
   createSession,
   createVideo,
+  db,
   deleteAsset,
   deleteSession,
   deleteVideo,
@@ -17,6 +18,7 @@ import {
 import { Buffer } from "node:buffer";
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 
+const HOST = Bun.env.HOST ?? "0.0.0.0";
 const PORT = Number(Bun.env.PORT ?? 3000);
 const ADMIN_USERNAME = Bun.env.ADMIN_USERNAME ?? "creator";
 const ADMIN_PASSWORD = Bun.env.ADMIN_PASSWORD ?? "changeme";
@@ -27,6 +29,8 @@ const PASSWORD_KEYLEN = 64;
 const PASSWORD_ITERATIONS = 120_000;
 const PASSWORD_DIGEST = "sha512";
 const MIN_PASSWORD_LENGTH = Number(Bun.env.MIN_PASSWORD_LENGTH ?? 12);
+
+ensureProductionConfig();
 
 seedIfEmpty();
 initializeAdminUser();
@@ -105,6 +109,47 @@ function redirect(location: string, cookie?: string) {
 
 function isProduction() {
   return (Bun.env.NODE_ENV ?? "").toLowerCase() === "production";
+}
+
+function ensureProductionConfig() {
+  if (Number.isNaN(PORT) || PORT <= 0) {
+    console.error("PORT must be a positive integer.");
+    process.exit(1);
+  }
+
+  if (Number.isNaN(SESSION_TTL_DAYS) || SESSION_TTL_DAYS <= 0) {
+    console.error("SESSION_TTL_DAYS must be a positive integer.");
+    process.exit(1);
+  }
+
+  if (Number.isNaN(MIN_PASSWORD_LENGTH) || MIN_PASSWORD_LENGTH < 8) {
+    console.error("MIN_PASSWORD_LENGTH must be at least 8 characters.");
+    process.exit(1);
+  }
+
+  if (!isProduction()) {
+    if (ADMIN_PASSWORD === "changeme") {
+      console.warn(
+        "⚠️  Using the default admin password. Set ADMIN_PASSWORD before deploying to production."
+      );
+    }
+    return;
+  }
+
+  if (!Bun.env.ADMIN_PASSWORD || ADMIN_PASSWORD === "changeme") {
+    console.error("ADMIN_PASSWORD must be set to a strong value in production.");
+    process.exit(1);
+  }
+
+  if (!Bun.env.ADMIN_USERNAME || ADMIN_USERNAME === "creator") {
+    console.error("ADMIN_USERNAME must be customized in production.");
+    process.exit(1);
+  }
+
+  if (ADMIN_PASSWORD.length < MIN_PASSWORD_LENGTH) {
+    console.error("ADMIN_PASSWORD does not meet MIN_PASSWORD_LENGTH requirement.");
+    process.exit(1);
+  }
 }
 
 function authCookie(sessionId: string, maxAgeSeconds: number) {
@@ -700,10 +745,19 @@ function notFound() {
   return new Response("Not Found", { status: 404 });
 }
 
-Bun.serve({
+function pruneSessionsSafely() {
+  try {
+    pruneSessions();
+  } catch (error) {
+    console.error("Failed to prune sessions", error);
+  }
+}
+
+const server = Bun.serve({
+  hostname: HOST,
   port: PORT,
   fetch: async (request) => {
-    pruneSessions();
+    pruneSessionsSafely();
     const url = new URL(request.url);
     const { pathname } = url;
 
@@ -780,7 +834,34 @@ Bun.serve({
     }
 
     return notFound();
+  },
+  error(error: Error) {
+    console.error("Unhandled server error", error);
+    return new Response("Internal Server Error", { status: 500 });
   }
 });
 
-console.log(`▶ Download hub ready on http://localhost:${PORT}`);
+registerGracefulShutdown(server);
+
+console.log(`▶ Download hub ready on http://${HOST}:${PORT} (env: ${Bun.env.NODE_ENV ?? "development"})`);
+
+function registerGracefulShutdown(server: ReturnType<typeof Bun.serve>) {
+  const shutdown = (signal: string) => {
+    console.log(`Received ${signal}. Shutting down gracefully...`);
+    try {
+      server.stop(true);
+    } catch (error) {
+      console.error("Failed to stop server", error);
+    }
+    try {
+      db.close();
+    } catch (error) {
+      console.error("Failed to close database connection", error);
+    }
+    process.exit(0);
+  };
+
+  ["SIGINT", "SIGTERM"].forEach((signal) => {
+    process.on(signal, () => shutdown(signal));
+  });
+}
