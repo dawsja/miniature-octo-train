@@ -1,0 +1,38 @@
+{
+  "admin": {
+    "defaultUsername": "creator",
+    "defaultPassword": "changeme"
+  },
+  "branding": {
+    "siteName": "Your Resource Hub",
+    "metaDescription": "Self-hosted download bundles for your community.",
+    "public": {
+      "heroTitle": "Curate resources for every tutorial.",
+      "heroDescription": "Share docker-compose files, env templates, and helper snippets for any project.",
+      "searchPlaceholder": "Search guides, tags, services...",
+      "emptyStateMessage": "No resources yet. Add your first pack from the admin dashboard.",
+      "cardCtaLabel": "View Guide",
+      "footerText": "© {{year}} {{siteName}} • Powered by Bun + SQLite"
+    },
+    "login": {
+      "heroTitle": "Your Resource Hub",
+      "heroDescription": "Sign in to add resources, tags, and download links.",
+      "defaultCredentialsHeading": "First time setup",
+      "defaultCredentialsHelper": "Use the seeded credentials to log in, then rotate the password."
+    },
+    "admin": {
+      "navLabel": "Your Resource Hub",
+      "heroTitle": "Manage downloads for your audience.",
+      "heroDescription": "Add packs, tags, and assets as soon as your content ships.",
+      "newPackTitle": "Add new pack",
+      "newPackDescription": "Provide the tutorial details, then attach inline files or external links."
+    },
+    "password": {
+      "setupTitle": "Secure your admin account",
+      "setupDescription": "Set a strong password before managing the hub.",
+      "changeTitle": "Update admin password",
+      "changeDescription": "Rotate passwords regularly to keep the hub safe.",
+      "helperText": "Choose something unique for this deployment."
+    }
+  }
+}

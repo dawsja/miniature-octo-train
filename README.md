@@ -10,13 +10,32 @@ A minimal Bun + SQLite app for sharing download bundles from Dawson's tutorial v
 - 🧭 Public landing page with search + responsive cards
 - 🪄 Automatic sample data (Vaultwarden, Nginx Proxy Manager, Jellyfin) seeded on first boot
 - 🔌 JSON feed at `/api/videos` for embedding elsewhere
+- 🐳 Docker + Compose workflow for turnkey self-hosting
+- 🎨 Runtime branding overrides via `resource-hub.config.json`
 
 ## Requirements
 
 - [Bun](https://bun.sh) v1.1+
 - SQLite (bundled with Bun via `bun:sqlite`)
 
-## Setup
+## Quick start (Docker Compose)
+
+1. Copy the sample configuration and create persistent volumes:
+   ```bash
+   cp .env.example .env
+   mkdir -p config data
+   cp resource-hub.config.example.json config/resource-hub.config.json
+   ```
+2. Adjust `.env` and `config/resource-hub.config.json` to match your branding or credentials.
+3. Launch the stack:
+   ```bash
+   docker compose up -d --build
+   ```
+4. Visit `http://localhost:3000` (public) or `http://localhost:3000/admin` to log in with the seeded credentials, then rotate the password on first access.
+
+`docker-compose.yml` mounts `./data` (SQLite) and `./config` (branding copy) so upgrades are as simple as pulling the repo and re-running `docker compose up -d --build`.
+
+## Manual setup (Bun)
 
 ```bash
 # install dependencies for TypeScript types
@@ -39,10 +58,40 @@ For any environment (including local development) Bun automatically loads variab
 | `DATABASE_FILE` | `downloads.db` | Filename for the SQLite database |
 | `SESSION_TTL_DAYS` | `7` | Session lifetime for admin logins |
 | `MIN_PASSWORD_LENGTH` | `12` | Minimum characters required for admin password changes |
+| `ADMIN_USERNAME` | `creator` | Username for the seeded admin account |
+| `ADMIN_PASSWORD` | `changeme` | Initial password (forces a change on first login) |
+| `RESOURCE_HUB_CONFIG_PATH` | `./resource-hub.config.json` | Optional path to the branding/UX config JSON |
 
-The admin console always boots with the default credentials `creator` / `changeme`. They are stored in SQLite and every first login is forced to rotate the password, so no `.env` changes are required for authentication.
+Set `ADMIN_USERNAME` / `ADMIN_PASSWORD` in `.env` or your Compose file to control the seeded account. The server still warns when defaults are in use and forces a rotation on first login. Point `RESOURCE_HUB_CONFIG_PATH` at a JSON file (see below) to override every headline, hero description, footer, and login/admin prompt without touching the templates.
+
+## Customizing text & branding
+
+1. Copy the sample config and make it your own:
+   ```bash
+   cp resource-hub.config.example.json resource-hub.config.json
+   ```
+2. Edit the JSON to match your wording (site name, hero copy, CTA label, footer text, etc.).
+3. Set `RESOURCE_HUB_CONFIG_PATH` (or mount `resource-hub.config.json` inside Docker) so the server can load it on boot.
+
+Every string in the JSON mirrors a section of the UI. For example:
+
+```json
+{
+  "branding": {
+    "siteName": "Acme Download Hub",
+    "public": {
+      "heroTitle": "Infrastructure playbooks in one place.",
+      "footerText": "© {{year}} {{siteName}} • DIY or die."
+    }
+  }
+}
+```
+
+The footer (and other strings) can use `{{siteName}}` and `{{year}}` tokens for lightweight templating. Missing fields automatically fall back to the stock Dawson wording, so you only need to override what changes between deployments.
 
 ## Production deployment
+
+If you're using Docker/Compose, deployments are as simple as `docker compose pull && docker compose up -d --build`. For bare-metal Bun installs, follow the steps below.
 
 1. Install Bun (v1.1+) and PM2 (globally via `npm install -g pm2`) on the target host.
 2. Copy `.env.example` to `.env` and adjust the networking/storage values (`HOST`, `PORT`, `DATA_DIR`, etc.).
