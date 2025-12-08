@@ -280,6 +280,9 @@ function renderLayout({
       padding: 3rem 1.5rem 1.25rem;
       text-align: center;
     }
+    header.hero {
+      padding-top: 1.5rem;
+    }
     .hero-title { font-size: clamp(2.4rem, 4vw, 3.75rem); margin-bottom: 0.5rem; }
     .hero-desc { max-width: 720px; margin: 0 auto; color: var(--muted); font-size: 1.15rem; }
     main { padding: 0 1.5rem 3rem; max-width: 1100px; margin: 0 auto; }
@@ -315,7 +318,6 @@ function renderLayout({
     .flex > div { flex: 1; min-width: 200px; }
     .asset-list { list-style: none; padding: 0; margin: 0.5rem 0 0; display: flex; flex-direction: column; gap: 0.4rem; }
     .asset-list li { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; padding: 0.65rem 0.5rem; border-bottom: 1px solid rgba(254,253,251,0.08); }
-    .badge { padding: 0.25rem 0.65rem; border-radius: 999px; font-size: 0.75rem; background: rgba(252,147,173,0.25); color: var(--bg); }
     .flash { background: rgba(252,147,173,0.12); border: 1px solid rgba(252,147,173,0.45); color: var(--accent); padding: 0.9rem 1rem; border-radius: 0.75rem; margin-bottom: 1rem; }
     .error { background: rgba(255,122,149,0.12); border: 1px solid rgba(255,122,149,0.4); color: var(--error); padding: 0.9rem 1rem; border-radius: 0.75rem; margin-bottom: 1rem; }
   </style>
@@ -374,8 +376,7 @@ function renderPublic(videos = listVideosWithAssets()) {
       </div>`;
 
   const body = `
-    <header>
-      <p class="badge">Dawson's Resource Hub</p>
+    <header class="hero">
       <h1 class="hero-title">Download packs for every tutorial.</h1>
       <p class="hero-desc">Every docker-compose, env template, and helper file from the channel in one place. Search, download, and plug the resources into any deployment workflow.</p>
     </header>
