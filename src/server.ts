@@ -10,6 +10,7 @@ import {
   ensureAdminUser,
   findSession,
   getAdminUser,
+  getAssetById,
   listAdminUsers,
   listVideosWithAssets,
   pruneSessions,
@@ -66,6 +67,98 @@ function parseTags(input: FormDataEntryValue | null): string[] {
     .split(",")
     .map((tag) => tag.trim())
     .filter(Boolean);
+}
+
+function sanitizeFilename(input?: string | null) {
+  const fallback = `asset-${Date.now()}.txt`;
+  if (!input) return fallback;
+  const trimmed = input.replace(/[\r\n]+/g, " ").trim();
+  if (!trimmed) return fallback;
+  const withoutPath = trimmed.replace(/[\\/]/g, "-");
+  const withoutIllegal = withoutPath.replace(/[<>:"|?*]/g, "");
+  const collapsedWhitespace = withoutIllegal.replace(/\s{2,}/g, " ");
+  return collapsedWhitespace.slice(0, 180) || fallback;
+}
+
+function resolveFilename(label: string, provided?: string | null) {
+  const base = provided && provided.trim().length > 0 ? provided : label;
+  const withExtension = base.includes(".") ? base : `${base}.txt`;
+  return sanitizeFilename(withExtension);
+}
+
+function normalizeSnippetContent(input: string) {
+  return input.replace(/\r\n/g, "\n");
+}
+
+function detectMimeTypeFromFilename(filename: string) {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "yml":
+    case "yaml":
+      return "text/yaml; charset=utf-8";
+    case "json":
+      return "application/json; charset=utf-8";
+    case "env":
+    case "txt":
+    case undefined:
+      return "text/plain; charset=utf-8";
+    case "sh":
+      return "text/x-shellscript; charset=utf-8";
+    case "ts":
+    case "tsx":
+      return "application/typescript; charset=utf-8";
+    case "js":
+    case "jsx":
+      return "application/javascript; charset=utf-8";
+    case "md":
+    case "mdx":
+      return "text/markdown; charset=utf-8";
+    case "conf":
+    case "ini":
+      return "text/plain; charset=utf-8";
+    default:
+      return "text/plain; charset=utf-8";
+  }
+}
+
+function contentDispositionFilename(filename: string) {
+  const safe = filename.replace(/"/g, "'");
+  return `attachment; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
+function extractYouTubeVideoId(input?: string | null) {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  try {
+    const url = new URL(trimmed);
+    const host = url.hostname.toLowerCase();
+
+    if (host === "youtu.be") {
+      const candidate = url.pathname.split("/").filter(Boolean)[0];
+      if (candidate && candidate.length === 11) return candidate;
+    }
+
+    if (host.endsWith("youtube.com")) {
+      const watchId = url.searchParams.get("v");
+      if (watchId && watchId.length === 11) return watchId;
+
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts.length >= 2 && ["shorts", "embed", "live"].includes(parts[0]) && parts[1].length === 11) {
+        return parts[1];
+      }
+    }
+  } catch {
+    // fall through to regex parsing
+  }
+
+  const fallbackMatch = trimmed.match(/(?:v=|\/)([0-9A-Za-z_-]{11})/);
+  return fallbackMatch ? fallbackMatch[1] : null;
+}
+
+function youtubeThumbnailUrl(videoId: string) {
+  return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 }
 
 function parseCookies(request: Request): Record<string, string> {
@@ -522,7 +615,16 @@ function renderAdmin(videos = listVideosWithAssets(), flash?: string) {
       const assets = video.assets
         .map(
           (asset) => `<li>
-            <span>${escapeHtml(asset.label)}</span>
+            <div style="display:flex;flex-direction:column;gap:0.15rem;">
+              <span>${escapeHtml(asset.label)}</span>
+              <span style="color:var(--muted);font-size:0.8rem;">
+                ${
+                  asset.content
+                    ? `Generated file • ${escapeHtml(asset.filename ?? "download.txt")}`
+                    : "External URL"
+                }
+              </span>
+            </div>
             <form method="post" action="/admin/assets/${asset.id}/delete">
               <button class="danger" type="submit">Remove</button>
             </form>
@@ -551,7 +653,7 @@ function renderAdmin(videos = listVideosWithAssets(), flash?: string) {
               <input type="url" name="video_url" value="${escapeHtml(video.video_url ?? "" )}" />
             </div>
             <div>
-              <label>Thumbnail URL</label>
+              <label>Thumbnail URL (leave blank to auto-fill)</label>
               <input type="url" name="thumbnail_url" value="${escapeHtml(video.thumbnail_url ?? "" )}" />
             </div>
           </div>
@@ -563,16 +665,17 @@ function renderAdmin(videos = listVideosWithAssets(), flash?: string) {
           <h3 style="margin-top:0.25rem;">Assets</h3>
           <ul class="asset-list">${assets || '<li style="justify-content:flex-start;color:var(--muted);">No assets yet</li>'}</ul>
           <form method="post" action="/admin/videos/${video.id}/assets" style="margin-top:1rem;">
-            <div class="flex">
-              <div>
-                <label>Label</label>
-                <input type="text" name="label" placeholder="docker-compose.yml" required />
-              </div>
-              <div>
-                <label>URL</label>
-                <input type="url" name="url" placeholder="https://..." required />
-              </div>
-            </div>
+            <label>Label</label>
+            <input type="text" name="label" placeholder="docker-compose.yml" required />
+            <label>Filename (used when generating a file)</label>
+            <input type="text" name="filename" placeholder="docker-compose.yml" />
+            <label>Code or text snippet</label>
+            <textarea name="content" placeholder="Paste the file content here"></textarea>
+            <label>External URL (optional)</label>
+            <input type="url" name="url" placeholder="https://..." />
+            <p style="margin:0 0 1rem;color:var(--muted);font-size:0.85rem;">
+              Paste a snippet to generate a downloadable file automatically, or leave it blank and provide a URL.
+            </p>
             <button class="primary" type="submit">Add asset</button>
           </form>
         </div>
@@ -602,7 +705,7 @@ function renderAdmin(videos = listVideosWithAssets(), flash?: string) {
               <input type="url" name="video_url" placeholder="https://youtube.com/watch?v=..." />
             </div>
             <div>
-              <label>Thumbnail URL</label>
+              <label>Thumbnail URL (leave blank to auto-fill)</label>
               <input type="url" name="thumbnail_url" placeholder="https://...jpg" />
             </div>
           </div>
@@ -682,13 +785,21 @@ async function handleCreateVideo(request: Request) {
   }
   const slugInput = form.get("slug")?.toString().trim();
   const slug = slugInput || slugify(title);
+  const videoUrl = form.get("video_url")?.toString().trim() || undefined;
+  let thumbnailUrl = form.get("thumbnail_url")?.toString().trim() || undefined;
+  if (!thumbnailUrl) {
+    const videoId = extractYouTubeVideoId(videoUrl);
+    if (videoId) {
+      thumbnailUrl = youtubeThumbnailUrl(videoId);
+    }
+  }
   try {
     createVideo({
       title,
       slug,
       description: form.get("description")?.toString().trim() || undefined,
-      video_url: form.get("video_url")?.toString().trim() || undefined,
-      thumbnail_url: form.get("thumbnail_url")?.toString().trim() || undefined,
+      video_url: videoUrl,
+      thumbnail_url: thumbnailUrl,
       tags: parseTags(form.get("tags"))
     });
     return redirect("/admin?flash=Video+pack+created");
@@ -704,12 +815,20 @@ async function handleUpdateVideo(request: Request, videoId: number) {
   if (!title) {
     return redirect("/admin?error=Title+is+required");
   }
+  const videoUrl = form.get("video_url")?.toString().trim() || undefined;
+  let thumbnailUrl = form.get("thumbnail_url")?.toString().trim() || undefined;
+  if (!thumbnailUrl) {
+    const videoId = extractYouTubeVideoId(videoUrl);
+    if (videoId) {
+      thumbnailUrl = youtubeThumbnailUrl(videoId);
+    }
+  }
   try {
     updateVideo(videoId, {
       title,
       description: form.get("description")?.toString().trim() || undefined,
-      video_url: form.get("video_url")?.toString().trim() || undefined,
-      thumbnail_url: form.get("thumbnail_url")?.toString().trim() || undefined,
+      video_url: videoUrl,
+      thumbnail_url: thumbnailUrl,
       tags: parseTags(form.get("tags"))
     });
     return redirect("/admin?flash=Changes+saved");
@@ -732,12 +851,31 @@ async function handleDeleteVideo(videoId: number) {
 async function handleCreateAsset(request: Request, videoId: number) {
   const form = await request.formData();
   const label = form.get("label")?.toString().trim();
-  const url = form.get("url")?.toString().trim();
-  if (!label || !url) {
-    return redirect("/admin?error=Asset+fields+required");
+  const urlInput = form.get("url")?.toString().trim();
+  const filenameInput = form.get("filename")?.toString();
+  const contentEntry = form.get("content");
+  const rawContent = typeof contentEntry === "string" ? contentEntry : contentEntry?.toString() ?? "";
+  const normalizedContent = rawContent ? normalizeSnippetContent(rawContent) : "";
+  const hasContent = normalizedContent.trim().length > 0;
+  const normalizedUrl = urlInput && urlInput.length > 0 ? urlInput : undefined;
+
+  if (!label) {
+    return redirect("/admin?error=Asset+label+is+required");
   }
+
+  if (!hasContent && !normalizedUrl) {
+    return redirect("/admin?error=Provide+content+or+a+URL");
+  }
+
+  const filename = hasContent ? resolveFilename(label, filenameInput) : undefined;
+
   try {
-    createAsset(videoId, { label, url });
+    createAsset(videoId, {
+      label,
+      url: hasContent ? undefined : normalizedUrl,
+      filename,
+      content: hasContent ? normalizedContent : undefined
+    });
     return redirect("/admin?flash=Asset+added");
   } catch (error) {
     console.error("Asset creation failed", error);
@@ -753,6 +891,20 @@ async function handleDeleteAsset(assetId: number) {
     console.error("Asset deletion failed", error);
     return redirect("/admin?error=Could+not+remove+asset");
   }
+}
+
+function handleAssetDownload(assetId: number) {
+  const asset = getAssetById(assetId);
+  if (!asset || !asset.content) {
+    return notFound();
+  }
+  const filename = asset.filename && asset.filename.trim().length > 0 ? asset.filename : `asset-${assetId}.txt`;
+  return new Response(asset.content, {
+    headers: {
+      "content-type": detectMimeTypeFromFilename(filename),
+      "content-disposition": contentDispositionFilename(filename)
+    }
+  });
 }
 
 function withAuth(
@@ -790,7 +942,14 @@ function servePublic() {
 }
 
 function serveApi() {
-  return jsonResponse({ videos: listVideosWithAssets() });
+  return jsonResponse({ videos: serializeVideosForApi() });
+}
+
+function serializeVideosForApi() {
+  return listVideosWithAssets().map((video) => ({
+    ...video,
+    assets: video.assets.map(({ content, ...rest }) => rest)
+  }));
 }
 
 function notFound() {
@@ -855,6 +1014,14 @@ const server = Bun.serve({
 
     if (pathname === "/healthz") {
       return new Response("ok");
+    }
+
+    const assetDownloadMatch = pathname.match(/^\/downloads\/assets\/(\d+)(?:\/.*)?$/);
+    if (assetDownloadMatch && request.method === "GET") {
+      const assetId = Number(assetDownloadMatch[1]);
+      if (!Number.isNaN(assetId)) {
+        return handleAssetDownload(assetId);
+      }
     }
 
     const videoUpdateMatch = pathname.match(/^\/admin\/videos\/(\d+)$/);
