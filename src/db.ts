@@ -20,6 +20,8 @@ export type AssetRecord = {
   label: string;
   url: string;
   sort_order: number;
+  filename: string | null;
+  content: string | null;
 };
 
 export type SessionRecord = {
@@ -66,9 +68,25 @@ CREATE TABLE IF NOT EXISTS assets (
   video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
   label TEXT NOT NULL,
   url TEXT NOT NULL,
-  sort_order INTEGER NOT NULL DEFAULT 0
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  filename TEXT,
+  content TEXT
 );
 `);
+
+function addColumnIfMissing(table: string, definition: string) {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  } catch (error) {
+    if (error instanceof Error && /duplicate column name/i.test(error.message)) {
+      return;
+    }
+    throw error;
+  }
+}
+
+addColumnIfMissing("assets", "filename TEXT");
+addColumnIfMissing("assets", "content TEXT");
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS sessions (
@@ -276,12 +294,52 @@ export function deleteVideo(id: number) {
   db.prepare("DELETE FROM videos WHERE id = ?").run(id);
 }
 
-export function createAsset(videoId: number, asset: { label: string; url: string; sort_order?: number }) {
-  db.prepare(`
-      INSERT INTO assets (video_id, label, url, sort_order)
-      VALUES (?, ?, ?, COALESCE(?, 0))
-    `)
-    .run(videoId, asset.label, asset.url, asset.sort_order ?? 0);
+function buildInlineAssetUrl(assetId: number, filename?: string | null) {
+  const safeName = filename && filename.trim().length > 0 ? filename.trim() : `asset-${assetId}.txt`;
+  return `/downloads/assets/${assetId}/${encodeURIComponent(safeName)}`;
+}
+
+export function createAsset(
+  videoId: number,
+  asset: {
+    label: string;
+    url?: string | null;
+    sort_order?: number;
+    filename?: string | null;
+    content?: string | null;
+  }
+): number {
+  if (!asset.url && !asset.content) {
+    throw new Error("Asset must include a URL or inline content");
+  }
+
+  const normalizedFilename =
+    asset.content && asset.filename && asset.filename.trim().length > 0
+      ? asset.filename.trim()
+      : asset.content
+        ? `asset-${Date.now()}.txt`
+        : null;
+
+  const result = db.prepare(`
+      INSERT INTO assets (video_id, label, url, sort_order, filename, content)
+      VALUES (?, ?, ?, COALESCE(?, 0), ?, ?)
+    `).run(
+    videoId,
+    asset.label,
+    asset.content ? asset.url ?? "" : asset.url ?? "",
+    asset.sort_order ?? 0,
+    normalizedFilename,
+    asset.content ?? null
+  );
+
+  const assetId = Number(result.lastInsertRowid);
+
+  if (asset.content) {
+    const downloadUrl = buildInlineAssetUrl(assetId, normalizedFilename);
+    db.prepare("UPDATE assets SET url = ? WHERE id = ?").run(downloadUrl, assetId);
+  }
+
+  return assetId;
 }
 
 export function deleteAsset(id: number) {
@@ -292,6 +350,11 @@ export function listAssetsByVideo(videoId: number): AssetRecord[] {
   return db
     .prepare("SELECT * FROM assets WHERE video_id = ? ORDER BY sort_order ASC")
     .all(videoId) as AssetRecord[];
+}
+
+export function getAssetById(id: number): AssetRecord | null {
+  const row = db.prepare("SELECT * FROM assets WHERE id = ?").get(id) as AssetRecord | undefined;
+  return row ?? null;
 }
 
 export function createSession(data: { id: string; expiresAt: string; ip?: string; userAgent?: string }) {
