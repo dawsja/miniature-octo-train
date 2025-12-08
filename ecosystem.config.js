@@ -1,14 +1,10 @@
-import path from "path";
-import { fileURLToPath } from "url";
+const path = require("path");
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-export default {
+module.exports = {
   apps: [
     {
       name: "download-hub",
-      script: "src/server.ts",
+      script: path.join(__dirname, "src/server.ts"),
       interpreter: "bun",
       cwd: __dirname,
       instances: 1,
