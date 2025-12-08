@@ -3,12 +3,14 @@ import {
   createSession,
   createVideo,
   db,
+  deleteAdminUser,
   deleteAsset,
   deleteSession,
   deleteVideo,
   ensureAdminUser,
   findSession,
   getAdminUser,
+  listAdminUsers,
   listVideosWithAssets,
   pruneSessions,
   seedIfEmpty,
@@ -111,6 +113,10 @@ function isProduction() {
   return (Bun.env.NODE_ENV ?? "").toLowerCase() === "production";
 }
 
+function isUsingDefaultCredentials() {
+  return ADMIN_USERNAME === "creator" && ADMIN_PASSWORD === "changeme";
+}
+
 function ensureProductionConfig() {
   if (Number.isNaN(PORT) || PORT <= 0) {
     console.error("PORT must be a positive integer.");
@@ -127,28 +133,14 @@ function ensureProductionConfig() {
     process.exit(1);
   }
 
-  if (!isProduction()) {
-    if (ADMIN_PASSWORD === "changeme") {
-      console.warn(
-        "⚠️  Using the default admin password. Set ADMIN_PASSWORD before deploying to production."
-      );
-    }
-    return;
-  }
-
-  if (!Bun.env.ADMIN_PASSWORD || ADMIN_PASSWORD === "changeme") {
-    console.error("ADMIN_PASSWORD must be set to a strong value in production.");
-    process.exit(1);
-  }
-
-  if (!Bun.env.ADMIN_USERNAME || ADMIN_USERNAME === "creator") {
-    console.error("ADMIN_USERNAME must be customized in production.");
-    process.exit(1);
-  }
-
-  if (ADMIN_PASSWORD.length < MIN_PASSWORD_LENGTH) {
-    console.error("ADMIN_PASSWORD does not meet MIN_PASSWORD_LENGTH requirement.");
-    process.exit(1);
+  if (isUsingDefaultCredentials()) {
+    console.warn(
+      "⚠️  Using default admin credentials (creator/changeme). You will be required to change your password on first login."
+    );
+  } else if (ADMIN_PASSWORD === "changeme") {
+    console.warn(
+      "⚠️  Using the default admin password. Set ADMIN_PASSWORD before deploying to production."
+    );
   }
 }
 
@@ -163,12 +155,38 @@ function clearAuthCookie() {
 }
 
 function initializeAdminUser() {
+  const forcePasswordChange = isUsingDefaultCredentials();
+
+  // Clean up any admin users with different usernames (env username changed)
+  const allAdmins = listAdminUsers();
+  for (const oldAdmin of allAdmins) {
+    if (oldAdmin.username !== ADMIN_USERNAME) {
+      console.log(`Removing stale admin user "${oldAdmin.username}" (env changed to "${ADMIN_USERNAME}")`);
+      deleteAdminUser(oldAdmin.username);
+    }
+  }
+
   const admin = getAdminUser(ADMIN_USERNAME);
+  const { hash, salt } = derivePasswordHash(ADMIN_PASSWORD);
+
   if (admin) {
+    // Check if we need to update the password (env changed or using defaults)
+    const envPasswordMatches = passwordsMatch(ADMIN_PASSWORD, admin.password_hash, admin.salt);
+
+    if (!envPasswordMatches) {
+      // Env password changed - update DB to match env (and require password change)
+      console.log(`Admin password updated from environment for "${ADMIN_USERNAME}"`);
+      updateAdminPassword(ADMIN_USERNAME, hash, salt, forcePasswordChange);
+    } else if (forcePasswordChange && !admin.must_change_password) {
+      // Using default credentials but must_change_password isn't set
+      updateAdminPassword(ADMIN_USERNAME, hash, salt, true);
+    }
     return;
   }
-  const { hash, salt } = derivePasswordHash(ADMIN_PASSWORD);
-  ensureAdminUser(ADMIN_USERNAME, hash, salt);
+
+  // Create new admin user
+  console.log(`Creating admin user "${ADMIN_USERNAME}"`);
+  ensureAdminUser(ADMIN_USERNAME, hash, salt, forcePasswordChange);
 }
 
 function adminMustChangePassword() {
@@ -398,6 +416,14 @@ function renderPublic(videos = listVideosWithAssets()) {
 }
 
 function renderLogin(message?: string) {
+  const isDefaultCreds = isUsingDefaultCredentials();
+  const defaultCredsHint = isDefaultCreds
+    ? `<div class="flash" style="text-align:left;">
+        <strong>First time setup:</strong> Use default credentials to log in, then you'll set your own password.<br>
+        <span style="font-size:0.9rem;">Username: <code style="background:rgba(254,253,251,0.08);padding:0.1rem 0.35rem;border-radius:0.25rem;">creator</code> &nbsp; Password: <code style="background:rgba(254,253,251,0.08);padding:0.1rem 0.35rem;border-radius:0.25rem;">changeme</code></span>
+      </div>`
+    : "";
+
   const body = `
     <header>
       <h1 class="hero-title">Dawson's Resource Hub</h1>
@@ -405,9 +431,10 @@ function renderLogin(message?: string) {
     </header>
     <main style="max-width:420px;">
       ${message ? `<div class="error">${escapeHtml(message)}</div>` : ""}
+      ${defaultCredsHint}
       <form class="form-card" method="post" action="/admin/login">
         <label for="username">Username</label>
-        <input id="username" name="username" type="text" placeholder="creator" required />
+        <input id="username" name="username" type="text" placeholder="${isDefaultCreds ? "creator" : "username"}" required />
         <label for="password">Password</label>
         <input id="password" name="password" type="password" placeholder="••••••••" required />
         <button class="primary" style="width:100%;" type="submit">Sign in</button>
@@ -432,12 +459,17 @@ function renderPasswordChange({
   flash?: string;
   requireChange: boolean;
 }) {
+  const isDefaultCreds = isUsingDefaultCredentials();
+  const currentPasswordHint = requireChange && isDefaultCreds
+    ? `<p style="margin:0 0 0.5rem;color:var(--muted);font-size:0.85rem;">Current password is: <code style="background:rgba(254,253,251,0.08);padding:0.15rem 0.4rem;border-radius:0.25rem;">changeme</code></p>`
+    : "";
+
   const body = `
     <header>
-      <h1 class="hero-title">${requireChange ? "Update your password" : "Change password"}</h1>
+      <h1 class="hero-title">${requireChange ? "Set up your password" : "Change password"}</h1>
       <p class="hero-desc">${
         requireChange
-          ? "For security, set a new creator password before managing resources."
+          ? "Welcome! Before you can manage resources, please set a secure password for your admin account."
           : "Use a strong password to protect the resource hub."
       }</p>
     </header>
@@ -446,6 +478,7 @@ function renderPasswordChange({
       ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
       <form class="form-card" method="post" action="/admin/password">
         <label for="current_password">Current password</label>
+        ${currentPasswordHint}
         <input id="current_password" name="current_password" type="password" placeholder="••••••••" required />
         <label for="new_password">New password</label>
         <input id="new_password" name="new_password" type="password" placeholder="Use at least ${MIN_PASSWORD_LENGTH} characters" required />
@@ -458,7 +491,7 @@ function renderPasswordChange({
   `;
 
   return renderLayout({
-    title: "Update admin password",
+    title: requireChange ? "Set up admin password" : "Change admin password",
     description: "Secure Dawson's Resource Hub with a unique password.",
     body,
     includeAdminNav: false
