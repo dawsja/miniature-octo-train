@@ -17,9 +17,6 @@ import {
 import { Buffer } from "node:buffer";
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 
-seedIfEmpty();
-initializeAdminUser();
-
 const PORT = Number(Bun.env.PORT ?? 3000);
 const ADMIN_USERNAME = Bun.env.ADMIN_USERNAME ?? "creator";
 const ADMIN_PASSWORD = Bun.env.ADMIN_PASSWORD ?? "changeme";
@@ -30,6 +27,9 @@ const PASSWORD_KEYLEN = 64;
 const PASSWORD_ITERATIONS = 120_000;
 const PASSWORD_DIGEST = "sha512";
 const MIN_PASSWORD_LENGTH = Number(Bun.env.MIN_PASSWORD_LENGTH ?? 12);
+
+seedIfEmpty();
+initializeAdminUser();
 
 function escapeHtml(value: string) {
   return value
