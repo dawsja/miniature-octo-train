@@ -325,7 +325,15 @@ export function getAdminUser(username: string): AdminUserRecord | null {
   return row ?? null;
 }
 
-export function ensureAdminUser(username: string, passwordHash: string, salt: string) {
+export function listAdminUsers(): AdminUserRecord[] {
+  return db.prepare("SELECT * FROM admin_users").all() as AdminUserRecord[];
+}
+
+export function deleteAdminUser(username: string) {
+  db.prepare("DELETE FROM admin_users WHERE username = ?").run(username);
+}
+
+export function ensureAdminUser(username: string, passwordHash: string, salt: string, forcePasswordChange = true) {
   const existing = getAdminUser(username);
   if (existing) {
     return;
@@ -334,9 +342,9 @@ export function ensureAdminUser(username: string, passwordHash: string, salt: st
   db.prepare(
     `
     INSERT INTO admin_users (username, password_hash, salt, must_change_password)
-    VALUES (?, ?, ?, 1)
+    VALUES (?, ?, ?, ?)
   `
-  ).run(username, passwordHash, salt);
+  ).run(username, passwordHash, salt, forcePasswordChange ? 1 : 0);
 }
 
 export function updateAdminPassword(username: string, passwordHash: string, salt: string, forceRotate = false) {
