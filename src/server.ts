@@ -5,14 +5,20 @@ import {
   deleteAsset,
   deleteSession,
   deleteVideo,
+  ensureAdminUser,
   findSession,
+  getAdminUser,
   listVideosWithAssets,
   pruneSessions,
   seedIfEmpty,
+  updateAdminPassword,
   updateVideo
 } from "./db";
+import { Buffer } from "node:buffer";
+import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 
 seedIfEmpty();
+initializeAdminUser();
 
 const PORT = Number(Bun.env.PORT ?? 3000);
 const ADMIN_USERNAME = Bun.env.ADMIN_USERNAME ?? "creator";
@@ -20,6 +26,10 @@ const ADMIN_PASSWORD = Bun.env.ADMIN_PASSWORD ?? "changeme";
 const SESSION_COOKIE = "sid";
 const SESSION_TTL_DAYS = Number(Bun.env.SESSION_TTL_DAYS ?? 7);
 const SESSION_MAX_AGE = SESSION_TTL_DAYS * 24 * 60 * 60; // seconds
+const PASSWORD_KEYLEN = 64;
+const PASSWORD_ITERATIONS = 120_000;
+const PASSWORD_DIGEST = "sha512";
+const MIN_PASSWORD_LENGTH = Number(Bun.env.MIN_PASSWORD_LENGTH ?? 12);
 
 function escapeHtml(value: string) {
   return value
@@ -62,6 +72,27 @@ function parseCookies(request: Request): Record<string, string> {
   }, {});
 }
 
+function derivePasswordHash(password: string, salt?: string) {
+  const actualSalt = salt ?? randomBytes(16).toString("hex");
+  const hash = pbkdf2Sync(password, actualSalt, PASSWORD_ITERATIONS, PASSWORD_KEYLEN, PASSWORD_DIGEST).toString("hex");
+  return { hash, salt: actualSalt };
+}
+
+function passwordsMatch(password: string, hash: string, salt: string) {
+  try {
+    const candidate = pbkdf2Sync(password, salt, PASSWORD_ITERATIONS, PASSWORD_KEYLEN, PASSWORD_DIGEST).toString("hex");
+    const candidateBuffer = Buffer.from(candidate, "hex");
+    const storedBuffer = Buffer.from(hash, "hex");
+    if (candidateBuffer.length !== storedBuffer.length) {
+      return false;
+    }
+    return timingSafeEqual(candidateBuffer, storedBuffer);
+  } catch (error) {
+    console.error("Failed to verify password", error);
+    return false;
+  }
+}
+
 function redirect(location: string, cookie?: string) {
   const headers: HeadersInit = {
     Location: location
@@ -84,6 +115,20 @@ function authCookie(sessionId: string, maxAgeSeconds: number) {
 function clearAuthCookie() {
   const secure = isProduction() ? "; Secure" : "";
   return `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`;
+}
+
+function initializeAdminUser() {
+  const admin = getAdminUser(ADMIN_USERNAME);
+  if (admin) {
+    return;
+  }
+  const { hash, salt } = derivePasswordHash(ADMIN_PASSWORD);
+  ensureAdminUser(ADMIN_USERNAME, hash, salt);
+}
+
+function adminMustChangePassword() {
+  const admin = getAdminUser(ADMIN_USERNAME);
+  return Boolean(admin?.must_change_password);
 }
 
 function isAuthenticated(request: Request) {
@@ -112,8 +157,14 @@ async function handleLogin(request: Request) {
     return redirect("/admin?error=Missing+credentials");
   }
 
-  if (username !== ADMIN_USERNAME || password !== ADMIN_PASSWORD) {
-    await Bun.sleep(150); // rudimentary timing guard
+  if (username !== ADMIN_USERNAME) {
+    await Bun.sleep(150);
+    return redirect("/admin?error=Invalid+credentials");
+  }
+
+  const admin = getAdminUser(ADMIN_USERNAME);
+  if (!admin || !passwordsMatch(password, admin.password_hash, admin.salt)) {
+    await Bun.sleep(150);
     return redirect("/admin?error=Invalid+credentials");
   }
 
@@ -126,7 +177,8 @@ async function handleLogin(request: Request) {
     userAgent: request.headers.get("user-agent") ?? undefined
   });
 
-  return redirect("/admin", authCookie(sessionId, SESSION_MAX_AGE));
+  const destination = admin.must_change_password ? "/admin/password" : "/admin";
+  return redirect(destination, authCookie(sessionId, SESSION_MAX_AGE));
 }
 
 async function handleLogout(request: Request) {
@@ -223,7 +275,7 @@ function renderLayout({
   </style>
 </head>
 <body>
-  ${includeAdminNav ? `<div class="admin-nav"><strong>Creator Control Room</strong><form method="post" action="/admin/logout"><button class="danger" type="submit">Logout</button></form></div>` : ""}
+  ${includeAdminNav ? `<div class="admin-nav"><strong>Dawson's Resource Hub</strong><form method="post" action="/admin/logout"><button class="danger" type="submit">Logout</button></form></div>` : ""}
   ${body}
   <script>
     const searchInput = document.getElementById('search');
@@ -277,9 +329,9 @@ function renderPublic(videos = listVideosWithAssets()) {
 
   const body = `
     <header>
-      <p class="badge">Self-hosting resource hub</p>
+      <p class="badge">Dawson's Resource Hub</p>
       <h1 class="hero-title">Download packs for every tutorial.</h1>
-      <p class="hero-desc">Every docker-compose, env template, and helper file from the channel in one place. Search, download, and start building your homelab faster.</p>
+      <p class="hero-desc">Every docker-compose, env template, and helper file from the channel in one place. Search, download, and plug the resources into any deployment workflow.</p>
     </header>
     <main>
       <input class="search-bar" id="search" type="text" placeholder="Search guides, tags, services..." />
@@ -287,11 +339,11 @@ function renderPublic(videos = listVideosWithAssets()) {
         ${gridContent}
       </section>
     </main>
-    <footer>© ${new Date().getFullYear()} Creator Download Hub • Crafted with Bun + SQLite</footer>
+    <footer>© ${new Date().getFullYear()} Dawson's Resource Hub • Crafted with Bun + SQLite</footer>
   `;
 
   return renderLayout({
-    title: "Download packs for every self-hosting video",
+    title: "Dawson's Resource Hub",
     description: "Centralized download links for docker compose files from the channel.",
     body,
     includeAdminNav: false
@@ -301,8 +353,8 @@ function renderPublic(videos = listVideosWithAssets()) {
 function renderLogin(message?: string) {
   const body = `
     <header>
-      <h1 class="hero-title">Creator Control Room</h1>
-      <p class="hero-desc">Sign in to curate download packs and keep files in sync with your videos.</p>
+      <h1 class="hero-title">Dawson's Resource Hub</h1>
+      <p class="hero-desc">Sign in to curate download packs and keep files in sync with every Dawson tutorial.</p>
     </header>
     <main style="max-width:420px;">
       ${message ? `<div class="error">${escapeHtml(message)}</div>` : ""}
@@ -317,8 +369,50 @@ function renderLogin(message?: string) {
   `;
 
   return renderLayout({
-    title: "Creator Control Room",
+    title: "Dawson's Resource Hub",
     description: "Manage downloadable assets for channel tutorials.",
+    body,
+    includeAdminNav: false
+  });
+}
+
+function renderPasswordChange({
+  error,
+  flash,
+  requireChange
+}: {
+  error?: string;
+  flash?: string;
+  requireChange: boolean;
+}) {
+  const body = `
+    <header>
+      <h1 class="hero-title">${requireChange ? "Update your password" : "Change password"}</h1>
+      <p class="hero-desc">${
+        requireChange
+          ? "For security, set a new creator password before managing resources."
+          : "Use a strong password to protect the resource hub."
+      }</p>
+    </header>
+    <main style="max-width:480px;">
+      ${flash ? `<div class="flash">${escapeHtml(flash)}</div>` : ""}
+      ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
+      <form class="form-card" method="post" action="/admin/password">
+        <label for="current_password">Current password</label>
+        <input id="current_password" name="current_password" type="password" placeholder="••••••••" required />
+        <label for="new_password">New password</label>
+        <input id="new_password" name="new_password" type="password" placeholder="Use at least ${MIN_PASSWORD_LENGTH} characters" required />
+        <label for="confirm_password">Confirm new password</label>
+        <input id="confirm_password" name="confirm_password" type="password" placeholder="Repeat new password" required />
+        <p style="margin:0 0 1rem;color:var(--muted);font-size:0.85rem;">Minimum ${MIN_PASSWORD_LENGTH} characters. Use a phrase you'll only use here.</p>
+        <button class="primary" style="width:100%;" type="submit">Save new password</button>
+      </form>
+    </main>
+  `;
+
+  return renderLayout({
+    title: "Update admin password",
+    description: "Secure Dawson's Resource Hub with a unique password.",
     body,
     includeAdminNav: false
   });
@@ -431,6 +525,47 @@ function renderAdmin(videos = listVideosWithAssets(), flash?: string) {
   });
 }
 
+function servePasswordChange(url: URL) {
+  const error = url.searchParams.get("error") ?? undefined;
+  const flash = url.searchParams.get("flash") ?? undefined;
+  const html = renderPasswordChange({
+    error,
+    flash,
+    requireChange: adminMustChangePassword()
+  });
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+async function handlePasswordChange(request: Request) {
+  const form = await request.formData();
+  const current = form.get("current_password")?.toString() ?? "";
+  const next = form.get("new_password")?.toString() ?? "";
+  const confirm = form.get("confirm_password")?.toString() ?? "";
+
+  if (!current || !next || !confirm) {
+    return redirect("/admin/password?error=All+fields+are+required");
+  }
+
+  if (next !== confirm) {
+    return redirect("/admin/password?error=Passwords+do+not+match");
+  }
+
+  if (next.length < MIN_PASSWORD_LENGTH) {
+    return redirect(`/admin/password?error=Password+must+be+at+least+${MIN_PASSWORD_LENGTH}+characters`);
+  }
+
+  const admin = getAdminUser(ADMIN_USERNAME);
+  if (!admin || !passwordsMatch(current, admin.password_hash, admin.salt)) {
+    await Bun.sleep(150);
+    return redirect("/admin/password?error=Current+password+is+incorrect");
+  }
+
+  const { hash, salt } = derivePasswordHash(next);
+  updateAdminPassword(ADMIN_USERNAME, hash, salt);
+
+  return redirect("/admin?flash=Password+updated");
+}
+
 function jsonResponse(data: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(data), {
     status: init?.status ?? 200,
@@ -522,9 +657,16 @@ async function handleDeleteAsset(assetId: number) {
   }
 }
 
-function withAuth(request: Request, handler: () => Promise<Response> | Response) {
+function withAuth(
+  request: Request,
+  handler: () => Promise<Response> | Response,
+  options?: { allowDuringPasswordReset?: boolean }
+) {
   if (!isAuthenticated(request)) {
     return redirect("/admin?error=Please+login");
+  }
+  if (adminMustChangePassword() && !options?.allowDuringPasswordReset) {
+    return redirect("/admin/password");
   }
   return handler();
 }
@@ -536,6 +678,9 @@ function serveAdmin(request: Request, url: URL) {
     return new Response(renderLogin(error ?? undefined), {
       headers: { "content-type": "text/html; charset=utf-8" }
     });
+  }
+  if (adminMustChangePassword()) {
+    return redirect("/admin/password");
   }
   const html = renderAdmin(listVideosWithAssets(), flash ?? undefined);
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
@@ -577,8 +722,28 @@ Bun.serve({
       return handleLogin(request);
     }
 
+    if (pathname === "/admin/password" && request.method === "GET") {
+      return withAuth(
+        request,
+        () => servePasswordChange(url),
+        { allowDuringPasswordReset: true }
+      );
+    }
+
+    if (pathname === "/admin/password" && request.method === "POST") {
+      return withAuth(
+        request,
+        () => handlePasswordChange(request),
+        { allowDuringPasswordReset: true }
+      );
+    }
+
     if (pathname === "/admin/logout" && request.method === "POST") {
-      return withAuth(request, () => handleLogout(request));
+      return withAuth(
+        request,
+        () => handleLogout(request),
+        { allowDuringPasswordReset: true }
+      );
     }
 
     if (pathname === "/healthz") {
