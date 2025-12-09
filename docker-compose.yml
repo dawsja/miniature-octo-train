@@ -1,0 +1,19 @@
+services:
+  resource-hub:
+    build: .
+    container_name: resource-hub
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATA_DIR: /data
+      DATABASE_FILE: downloads.db
+      RESOURCE_HUB_CONFIG_PATH: /config/resource-hub.config.json
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-creator}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+    volumes:
+      - ./data:/data
+      - ./config:/config

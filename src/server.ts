@@ -18,14 +18,14 @@ import {
   updateAdminPassword,
   updateVideo
 } from "./db";
+import { adminDefaults, branding, formatBrandingText } from "./config";
 import { Buffer } from "node:buffer";
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 
 const HOST = Bun.env.HOST ?? "0.0.0.0";
 const PORT = Number(Bun.env.PORT ?? 3000);
-const DEFAULT_ADMIN_USERNAME = "creator";
-const DEFAULT_ADMIN_PASSWORD = "changeme";
-const ADMIN_USERNAME = DEFAULT_ADMIN_USERNAME;
+const ADMIN_USERNAME = adminDefaults.defaultUsername;
+const DEFAULT_ADMIN_PASSWORD = adminDefaults.defaultPassword;
 const SESSION_COOKIE = "sid";
 const SESSION_TTL_DAYS = Number(Bun.env.SESSION_TTL_DAYS ?? 7);
 const SESSION_MAX_AGE = SESSION_TTL_DAYS * 24 * 60 * 60; // seconds
@@ -252,7 +252,7 @@ function ensureProductionConfig() {
 
   if (isUsingDefaultCredentials()) {
     console.warn(
-      "⚠️  Using default admin credentials (creator/changeme). You will be required to change your password on first login."
+      `⚠️  Using default admin credentials (${ADMIN_USERNAME}/${DEFAULT_ADMIN_PASSWORD}). You will be required to change your password on first login.`
     );
   }
 }
@@ -364,18 +364,22 @@ function renderLayout({
   description,
   includeAdminNav
 }: {
-  title: string;
+  title?: string;
   body: string;
-  description: string;
+  description?: string;
   includeAdminNav?: boolean;
 }) {
+  const resolvedTitle = title ?? branding.siteName;
+  const resolvedDescription = description ?? branding.metaDescription;
+  const navLabel = branding.admin.navLabel || branding.siteName;
+
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(title)}</title>
-  <meta name="description" content="${escapeHtml(description)}" />
+  <title>${escapeHtml(resolvedTitle)}</title>
+  <meta name="description" content="${escapeHtml(resolvedDescription)}" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -446,7 +450,9 @@ function renderLayout({
   </style>
 </head>
 <body>
-  ${includeAdminNav ? `<div class="admin-nav"><strong>Dawson's Resource Hub</strong><form method="post" action="/admin/logout"><button class="danger" type="submit">Logout</button></form></div>` : ""}
+  ${includeAdminNav ? `<div class="admin-nav"><strong>${escapeHtml(
+      navLabel
+    )}</strong><form method="post" action="/admin/logout"><button class="danger" type="submit">Logout</button></form></div>` : ""}
   ${body}
   <script>
     const searchInput = document.getElementById('search');
@@ -466,6 +472,8 @@ function renderLayout({
 }
 
 function renderPublic(videos = listVideosWithAssets()) {
+  const footerCopy = formatBrandingText(branding.public.footerText);
+
   const cards = videos
     .map((video) => {
       const tags = video.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
@@ -488,33 +496,35 @@ function renderPublic(videos = listVideosWithAssets()) {
         </div>
         <div class="tags">${tags}</div>
         <div class="downloads">${downloads}</div>
-        ${video.video_url ? `<div class="cta"><a href="${escapeHtml(video.video_url)}" target="_blank" rel="noopener">Watch Tutorial →</a></div>` : ""}
+        ${video.video_url ? `<div class="cta"><a href="${escapeHtml(video.video_url)}" target="_blank" rel="noopener">${escapeHtml(
+          branding.public.cardCtaLabel
+        )}</a></div>` : ""}
       </article>`;
     })
     .join("");
   const gridContent =
     cards ||
     `<div class="card" style="grid-column: 1 / -1; text-align:center;">
-        <p style="margin:0;">No download packs yet. Check back soon!</p>
+        <p style="margin:0;">${escapeHtml(branding.public.emptyStateMessage)}</p>
       </div>`;
 
   const body = `
     <header class="hero">
-      <h1 class="hero-title">Download packs for every tutorial.</h1>
-      <p class="hero-desc">Every docker-compose, env template, and helper file from the channel in one place. Search, download, and plug the resources into any deployment workflow.</p>
+      <h1 class="hero-title">${escapeHtml(branding.public.heroTitle)}</h1>
+      <p class="hero-desc">${escapeHtml(branding.public.heroDescription)}</p>
     </header>
     <main>
-      <input class="search-bar" id="search" type="text" placeholder="Search guides, tags, services..." />
+      <input class="search-bar" id="search" type="text" placeholder="${escapeHtml(branding.public.searchPlaceholder)}" />
       <section class="grid">
         ${gridContent}
       </section>
     </main>
-    <footer>© ${new Date().getFullYear()} Dawson's Resource Hub • Crafted with Bun + SQLite</footer>
+    <footer>${escapeHtml(footerCopy)}</footer>
   `;
 
   return renderLayout({
-    title: "Dawson's Resource Hub",
-    description: "Centralized download links for docker compose files from the channel.",
+    title: branding.siteName,
+    description: branding.metaDescription,
     body,
     includeAdminNav: false
   });
@@ -524,9 +534,11 @@ function renderLogin(message?: string) {
   const isDefaultCreds = isUsingDefaultCredentials();
   const defaultCredsHint = isDefaultCreds
     ? `<div class="flash" style="text-align:left;">
-        <strong>First time setup:</strong> Use default credentials to log in, then you'll set your own password.<br>
+        <strong>${escapeHtml(branding.login.defaultCredentialsHeading)}:</strong> ${escapeHtml(
+          branding.login.defaultCredentialsHelper
+        )}<br>
         <span style="font-size:0.9rem;">Username: <code style="background:rgba(254,253,251,0.08);padding:0.1rem 0.35rem;border-radius:0.25rem;">${escapeHtml(
-          DEFAULT_ADMIN_USERNAME
+          ADMIN_USERNAME
         )}</code> &nbsp; Password: <code style="background:rgba(254,253,251,0.08);padding:0.1rem 0.35rem;border-radius:0.25rem;">${escapeHtml(
           DEFAULT_ADMIN_PASSWORD
         )}</code></span>
@@ -535,15 +547,15 @@ function renderLogin(message?: string) {
 
   const body = `
     <header>
-      <h1 class="hero-title">Dawson's Resource Hub</h1>
-      <p class="hero-desc">Sign in to curate download packs and keep files in sync with every Dawson tutorial.</p>
+      <h1 class="hero-title">${escapeHtml(branding.login.heroTitle)}</h1>
+      <p class="hero-desc">${escapeHtml(branding.login.heroDescription)}</p>
     </header>
     <main style="max-width:420px;">
       ${message ? `<div class="error">${escapeHtml(message)}</div>` : ""}
       ${defaultCredsHint}
       <form class="form-card" method="post" action="/admin/login">
         <label for="username">Username</label>
-        <input id="username" name="username" type="text" placeholder="${isDefaultCreds ? DEFAULT_ADMIN_USERNAME : "username"}" required />
+        <input id="username" name="username" type="text" placeholder="${isDefaultCreds ? ADMIN_USERNAME : "username"}" required />
         <label for="password">Password</label>
         <input id="password" name="password" type="password" placeholder="••••••••" required />
         <button class="primary" style="width:100%;" type="submit">Sign in</button>
@@ -552,8 +564,8 @@ function renderLogin(message?: string) {
   `;
 
   return renderLayout({
-    title: "Dawson's Resource Hub",
-    description: "Manage downloadable assets for channel tutorials.",
+    title: branding.siteName,
+    description: branding.metaDescription,
     body,
     includeAdminNav: false
   });
@@ -574,15 +586,13 @@ function renderPasswordChange({
         escapeHtml(DEFAULT_ADMIN_PASSWORD)
       }</code></p>`
     : "";
+  const heading = requireChange ? branding.password.setupTitle : branding.password.changeTitle;
+  const description = requireChange ? branding.password.setupDescription : branding.password.changeDescription;
 
   const body = `
     <header>
-      <h1 class="hero-title">${requireChange ? "Set up your password" : "Change password"}</h1>
-      <p class="hero-desc">${
-        requireChange
-          ? "Welcome! Before you can manage resources, please set a secure password for your admin account."
-          : "Use a strong password to protect the resource hub."
-      }</p>
+      <h1 class="hero-title">${escapeHtml(heading)}</h1>
+      <p class="hero-desc">${escapeHtml(description)}</p>
     </header>
     <main style="max-width:480px;">
       ${flash ? `<div class="flash">${escapeHtml(flash)}</div>` : ""}
@@ -595,15 +605,17 @@ function renderPasswordChange({
         <input id="new_password" name="new_password" type="password" placeholder="Use at least ${MIN_PASSWORD_LENGTH} characters" required />
         <label for="confirm_password">Confirm new password</label>
         <input id="confirm_password" name="confirm_password" type="password" placeholder="Repeat new password" required />
-        <p style="margin:0 0 1rem;color:var(--muted);font-size:0.85rem;">Minimum ${MIN_PASSWORD_LENGTH} characters. Use a phrase you'll only use here.</p>
+        <p style="margin:0 0 1rem;color:var(--muted);font-size:0.85rem;">Minimum ${MIN_PASSWORD_LENGTH} characters. ${escapeHtml(
+          branding.password.helperText
+        )}</p>
         <button class="primary" style="width:100%;" type="submit">Save new password</button>
       </form>
     </main>
   `;
 
   return renderLayout({
-    title: requireChange ? "Set up admin password" : "Change admin password",
-    description: "Secure Dawson's Resource Hub with a unique password.",
+    title: branding.siteName,
+    description: branding.metaDescription,
     body,
     includeAdminNav: false
   });
@@ -685,13 +697,16 @@ function renderAdmin(videos = listVideosWithAssets(), flash?: string) {
 
   const body = `
     <header>
-      <h1 class="hero-title">Keep your download hub fresh.</h1>
-      <p class="hero-desc">Update docker-compose files and resources the moment your videos drop.</p>
+      <h1 class="hero-title">${escapeHtml(branding.admin.heroTitle)}</h1>
+      <p class="hero-desc">${escapeHtml(branding.admin.heroDescription)}</p>
     </header>
     <main>
       ${flash ? `<div class="flash">${escapeHtml(flash)}</div>` : ""}
       <section class="form-card">
-        <h2 style="margin-top:0;">Add new video pack</h2>
+        <h2 style="margin-top:0;">${escapeHtml(branding.admin.newPackTitle)}</h2>
+        <p style="margin:0 0 1rem;color:var(--muted);font-size:0.95rem;">${escapeHtml(
+          branding.admin.newPackDescription
+        )}</p>
         <form method="post" action="/admin/videos">
           <label>Title</label>
           <input type="text" name="title" placeholder="Immich photo server" required />
@@ -719,8 +734,8 @@ function renderAdmin(videos = listVideosWithAssets(), flash?: string) {
   `;
 
   return renderLayout({
-    title: "Admin • Download hub",
-    description: "Manage downloadable resources.",
+    title: `${branding.siteName} • Admin`,
+    description: branding.metaDescription,
     body,
     includeAdminNav: true
   });
